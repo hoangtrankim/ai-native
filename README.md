@@ -48,6 +48,34 @@ You can also install from a local clone with `./install.sh`. Re-run the same com
 
 You approve the brief before any code is written. Everything after that runs on its own until the PR is open.
 
+### Auto-fix while you review on GitHub
+
+Use Claude Code's built-in `/loop` command to have Claude check the PR on a timer. Start it in the repo, right after `/task` opens the PR:
+
+```
+/loop 10m /pr-fix 42
+```
+
+Every 10 minutes Claude runs `/pr-fix 42`:
+- **New comments:** fixes the code, runs the tests, pushes to the PR branch, replies to each comment, and saves lessons.
+- **Nothing new:** reports that nothing is left and waits for the next check.
+
+Each reply Claude posts carries a hidden `<!-- ai-native -->` marker, so a comment that is already handled is never fixed twice. Leave out `10m` to let Claude choose how often to check. Press `Esc` or close the session to stop.
+
+Typical flow:
+1. `/task PROJ-123` opens PR #42.
+2. `/loop 10m /pr-fix 42`, then leave the terminal open.
+3. Review on GitHub and leave comments.
+4. Within about 10 minutes, the fixes are pushed and your comments have replies.
+5. Approve and merge. The lessons are already saved, so the next `/task` uses them.
+
+Tips:
+- The loop only runs while this Claude Code session is open and your computer is awake.
+- Submit your comments as one GitHub review ("Start a review" → "Submit review"), not one at a time, so each check fixes everything together.
+- To fix only some comments, end your review with a summary comment that says which ones to fix. Claude reads the whole review before it starts.
+- A check pauses and asks you in the terminal when the working tree has uncommitted changes, or when Claude disagrees with a comment. Answer there and the loop continues.
+- Run the loop in its own terminal or worktree. It checks out the PR branch, so it can conflict with other work in the same folder.
+
 ## Memory
 
 ```
