@@ -49,7 +49,7 @@ $(tail -n 40 <<<"$out")"
 }
 
 pre_ship() {
-  local cmd ship_re branch default tmpidx tree key stamp c out failed=""
+  local cmd ship_re push_re branch default tmpidx tree key stamp c out failed=""
   cmd="$(field .tool_input.command)"
   ship_re='(^|[;&|({[:space:]])(git[[:space:]]+(commit|push)|gh[[:space:]]+pr[[:space:]]+create)([[:space:]]|$)'
   [[ "$cmd" =~ $ship_re ]] || exit 0
@@ -61,7 +61,9 @@ pre_ship() {
   if [[ "$cmd" =~ git[[:space:]]+(commit|push) && "$branch" == "$default" ]]; then
     block "ai-native: blocked — you are on '$default'. Create a feature branch first (git switch -c feat/<id>-<slug>)."
   fi
-  if [[ "$cmd" =~ git[[:space:]]+push.*[[:space:]:]${default}([[:space:]]|$) ]]; then
+  # Look only inside the `git push …` segment, up to the next ; & | or newline.
+  push_re="git[[:space:]]+push[^;&|"$'\n'"]*[[:space:]:+]${default}([[:space:];&|]|\$)"
+  if [[ "$cmd" =~ $push_re ]]; then
     block "ai-native: blocked — pushing to '$default' is not allowed. Push the feature branch and open a PR."
   fi
 
