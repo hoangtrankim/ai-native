@@ -34,13 +34,27 @@ Options (put them after `bash -s --`):
 | Flag | Effect |
 |---|---|
 | `--project-setup` | Run inside a repo to add `.ai-native.json` and a CI workflow to it (see [Hooks and CI](#hooks-and-ci)) |
-| `--project` | Install into the current repo's `./.claude/` so you can commit it for your team |
+| `--project` | Install into the current repo's `.claude/` instead of `~/.claude` (see [Per-project install](#per-project-install)) |
 | `--ref v1.0` | Install a specific tag or branch |
 | `--skip-mcp` | Skip the Jira MCP setup |
 | `--no-hooks` | Don't add the lint/test hooks |
 | `--uninstall` | Remove the skills, agents, and hooks (memory is kept) |
 
 You can also install from a local clone with `./install.sh`. Re-run the same command to update.
+
+### Per-project install
+
+To use ai-native in one repo only, or to share it with your team through git, install it into the repo instead of `~/.claude`:
+
+```bash
+cd your-repo
+curl -fsSL https://raw.githubusercontent.com/hoangtrankim/ai-native/main/install.sh | bash -s -- --project --skip-mcp
+curl -fsSL https://raw.githubusercontent.com/hoangtrankim/ai-native/main/install.sh | bash -s -- --project-setup
+```
+
+Commit `.claude/` (skills, agents, `hooks/ai-native-check.sh`, `settings.json`) together with `.ai-native.json` through a PR. The hooks find their script through `$CLAUDE_PROJECT_DIR`, so the repo doesn't depend on anything in `~/.claude`. Anyone who clones the repo gets `/task`, `/pr-fix`, and the hooks. Memory and briefs still live in `~/.claude/ai-native/` on each machine.
+
+To update, re-run the `--project` command and commit the changes. To remove it, run with `--project --uninstall`. A global `--uninstall` never touches project installs.
 
 ## Usage
 

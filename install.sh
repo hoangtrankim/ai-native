@@ -28,13 +28,11 @@ ATLASSIAN_MCP_URL="https://mcp.atlassian.com/v1/mcp/authv2"
 SKILLS=(task pr-fix)
 AGENTS=(ai-native-coder ai-native-reviewer)
 MARKER=".ai-native"
-# Hook commands as written into settings.json; $HOME is expanded when the hook runs.
-HOOK_POST='"$HOME/.claude/ai-native/hooks/check.sh" post-edit'
-HOOK_PRE='"$HOME/.claude/ai-native/hooks/check.sh" pre-ship'
+PROJECT=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --project)       TARGET="$(pwd)/.claude" ;;
+    --project)       PROJECT=1 ;;
     --project-setup) PROJECT_SETUP=1 ;;
     --ref)           REF="${2:?--ref needs a value}"; shift ;;
     --skip-mcp)      SKIP_MCP=1 ;;
@@ -49,6 +47,20 @@ done
 info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
 
+# Where the hook script lives and how settings.json refers to it (variables expand when the hook runs).
+# Global: ~/.claude/ai-native/hooks/check.sh. Project: <repo>/.claude/hooks/ai-native-check.sh,
+# committed with the repo so the project install doesn't depend on anything in ~/.claude.
+if [[ $PROJECT -eq 1 ]]; then
+  TARGET="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.claude"
+  HOOK_FILE="$TARGET/hooks/ai-native-check.sh"
+  HOOK_REF='"$CLAUDE_PROJECT_DIR"/.claude/hooks/ai-native-check.sh'
+else
+  HOOK_FILE="$AI_HOME/hooks/check.sh"
+  HOOK_REF='"$HOME/.claude/ai-native/hooks/check.sh"'
+fi
+HOOK_POST="$HOOK_REF post-edit"
+HOOK_PRE="$HOOK_REF pre-ship"
+
 # Add (add=1) or remove (add=0) the ai-native hook entries in a settings.json, keeping every other hook.
 update_settings_hooks() {
   local settings="$1" add="$2" tmpf
@@ -57,11 +69,14 @@ update_settings_hooks() {
     return 0
   fi
   mkdir -p "$(dirname "$settings")"
-  [[ -s "$settings" ]] || echo '{}' >"$settings"
-  cp "$settings" "$settings.bak.ai-native"
+  if [[ -s "$settings" ]]; then
+    [[ $PROJECT -eq 1 ]] || cp "$settings" "$settings.bak.ai-native"   # a repo has git history instead
+  else
+    echo '{}' >"$settings"
+  fi
   tmpf="$(mktemp)"
   jq --arg post "$HOOK_POST" --arg pre "$HOOK_PRE" --argjson add "$add" '
-    def strip: map(select([.hooks[]?.command // "" | tostring | contains("ai-native/hooks/check.sh")] | any | not));
+    def strip: map(select([.hooks[]?.command // "" | tostring | test("ai-native/hooks/check\\.sh|ai-native-check\\.sh")] | any | not));
     .hooks = (.hooks // {})
     | .hooks.PostToolUse = ((.hooks.PostToolUse // []) | strip)
     | .hooks.PreToolUse  = ((.hooks.PreToolUse  // []) | strip)
@@ -84,7 +99,8 @@ if [[ $UNINSTALL -eq 1 ]]; then
   if [[ -f "$TARGET/settings.json" ]]; then
     update_settings_hooks "$TARGET/settings.json" 0 && info "Removed ai-native hooks from $TARGET/settings.json"
   fi
-  rm -rf "$AI_HOME/hooks"
+  rm -f "$HOOK_FILE"
+  [[ $PROJECT -eq 1 ]] || rm -rf "$AI_HOME/hooks"
   info "Kept memory and briefs in $AI_HOME (delete manually if unwanted)."
   exit 0
 fi
@@ -157,9 +173,9 @@ done
 
 # --- Hooks: script lives in AI_HOME; entries are merged into settings.json ---
 if [[ $NO_HOOKS -eq 0 ]]; then
-  mkdir -p "$AI_HOME/hooks"
-  cp "$SRC/hooks/check.sh" "$AI_HOME/hooks/check.sh"
-  chmod +x "$AI_HOME/hooks/check.sh"
+  mkdir -p "$(dirname "$HOOK_FILE")"
+  cp "$SRC/hooks/check.sh" "$HOOK_FILE"
+  chmod +x "$HOOK_FILE"
   update_settings_hooks "$TARGET/settings.json" 1
   info "Installed lint/test hooks (active only in repos with .ai-native.json)"
 fi
