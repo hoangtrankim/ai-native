@@ -1,0 +1,10 @@
+{
+  "extensions": [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"],
+  "format": "npx --no-install prettier --write",
+  "lint": "npx --no-install eslint --fix",
+  "check": [
+    "npm run lint --if-present",
+    "npm run typecheck --if-present",
+    "npm test --if-present"
+  ]
+}

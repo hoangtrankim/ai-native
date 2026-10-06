@@ -1,0 +1,9 @@
+{
+  "_comment": "Edit these for your stack. format/lint get the edited file path appended; check runs before commit/push/PR and in CI.",
+  "extensions": [],
+  "format": "",
+  "lint": "",
+  "check": [
+    "echo 'TODO: replace with your lint and test commands' && exit 1"
+  ]
+}

@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+          cache: npm
+      - run: npm ci
+      # The same commands the ai-native pre-ship hook runs locally.
+      - name: Run checks from .ai-native.json
+        run: |
+          while IFS= read -r cmd; do
+            echo "::group::$cmd"
+            bash -c "$cmd" </dev/null
+            echo "::endgroup::"
+          done < <(jq -r '.check[]' .ai-native.json)
