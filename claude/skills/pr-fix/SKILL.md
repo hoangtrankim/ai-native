@@ -1,6 +1,6 @@
 ---
 name: pr-fix
-description: AI-native workflow — read GitHub PR review comments and failing CI checks, fix the code with the coder subagent, push, reply to reviewers, and save reusable lessons to memory so future /task runs avoid the same mistakes.
+description: AI-native workflow — read GitHub PR review comments, failing CI checks, and merge conflicts, fix the code with the coder subagent, push, reply to reviewers, and save reusable lessons to memory so future /task runs avoid the same mistakes.
 argument-hint: "[PR number — defaults to the current branch's PR]"
 disable-model-invocation: true
 allowed-tools:
@@ -33,6 +33,7 @@ Every comment you post ends with the marker `<!-- ai-native -->`. Later runs use
 1. Find the PR number: `$ARGUMENTS` if given, otherwise `gh pr view --json number -q .number`. If there is no PR, stop.
    Check `gh pr view <N> --json state -q .state`. If it is `MERGED` or `CLOSED`, say "PR #N is <state>; nothing to fix. You can stop the loop (Esc)." and stop.
 2. `git status --porcelain` must be empty. If it is not, ask the user before continuing. Then `gh pr checkout <N>` and `git pull --ff-only`.
+   If the checkout fails because the branch is checked out in another worktree (`git worktree list` shows where), tell the user to run `/pr-fix <N>` in that folder instead, and stop. Parallel jobs each own their branch.
 3. Fetch the feedback:
    - PR metadata, reviews, and general comments: `gh pr view <N> --json number,title,url,body,headRefName,baseRefName,author,reviews,comments`
    - Review threads with resolution state:
@@ -42,12 +43,14 @@ Every comment you post ends with the marker `<!-- ai-native -->`. Later runs use
          reviewThreads(first:100){ nodes{ id isResolved isOutdated path line
            comments(first:50){ nodes{ databaseId author{login} body url } } } } } } }'
      ```
+   - Merge state: `gh pr view <N> --json mergeable,mergeStateStatus`. If `mergeable` is `UNKNOWN`, GitHub is still computing it. Wait 5 seconds and retry up to 5 times.
    - CI checks for the PR's latest commit: `gh pr checks <N> --json name,state,bucket,link,workflow`. This exits non-zero when checks fail, so read the JSON and ignore the exit code.
      For each check with `bucket` = `fail`: if `link` is a GitHub Actions URL (`…/actions/runs/<run-id>/job/<job-id>`), get the log with `gh run view <run-id> --log-failed | tail -n 200`. Otherwise use the check's name, description, and link.
 4. Keep only feedback that is still open:
    - unresolved review threads whose **last** comment does not contain `<!-- ai-native -->`
    - review summaries (`CHANGES_REQUESTED` or `COMMENTED` with a non-empty body) and general PR comments that have no later reply containing the marker
    - failing CI checks (`bucket` = `fail`). Each is one item. Its state comes from GitHub, so it needs no marker.
+   - a **conflict** item if `mergeable` is `CONFLICTING`. This is common when parallel PRs edit the same lines and another one merged first. Also add one if `mergeStateStatus` is `BEHIND` (branch protection requires an up-to-date branch).
    - skip bot comments (coverage, CI summaries); failing checks already cover them
    If there are no open items: if any check has `bucket` = `pending`, say "CI is still running on #N; will check again next run" and stop. Otherwise say nothing is left and stop.
    **Loop guard:** if a CI check fails for the same reason it failed before the last `fix(…)` commit from ai-native, do not try a third time. Report it to the user with the log excerpt and stop.
@@ -65,10 +68,13 @@ Classify each item:
 Show a short table (item, file:line, class, planned action). If any item is **discuss**, or a request conflicts with the brief, use AskUserQuestion before changing code.
 
 ## Phase 3 — Fix
+0. **Conflicts first** (only when there is a conflict item). Merge, don't rebase. Merging needs no force-push, and review comments stay attached to their lines:
+   `git fetch origin && git merge origin/<baseRefName>`
+   For each conflicted file (`git diff --name-only --diff-filter=U`), resolve it so that **both sides' intent survives**. Never drop changes that came from `<baseRefName>`, because those are other merged work. For example, if two PRs each tick a different roadmap row, keep both ticks. If two changes truly contradict each other and the brief doesn't settle it, ask the user with AskUserQuestion. After resolving, run the `check` commands, then `git add -A && git commit --no-edit`. If CI items exist, re-check them after the merge; the merge may already fix them.
 1. Spawn `ai-native-coder` with: the brief, the relevant lessons, and every **fix** and **ci** item. For review items, include the file, line, and the reviewer's exact words. For CI items, include the check name, the failing command, the log excerpt, and your diagnosis. Tell it to make only those changes.
 2. Spawn `ai-native-reviewer` on the new changes (`git diff`) to confirm each item is addressed and nothing regressed. Allow at most 1 extra fix round.
 3. Run every command in `.ai-native.json` `check` (or the brief's test, lint, and type commands) yourself and confirm they pass.
-4. Commit: `fix(<KEY or ID>): address review feedback on #<N>`, or `fix(<KEY or ID>): fix CI on #<N>` when only CI items were fixed. Then `git push`.
+4. Commit: `fix(<KEY or ID>): address review feedback on #<N>`, or `fix(<KEY or ID>): fix CI on #<N>` when only CI items were fixed. Skip this commit if the only item was a conflict, because the merge commit from step 0 already holds it. Then `git push`.
    If an ai-native hook blocks the commit or push, fix the cause and retry. Never bypass a hook: no `--no-verify`, and no weakening `.ai-native.json` or lint, type, or test config.
 
 ## Phase 4 — Reply to reviewers
@@ -94,4 +100,4 @@ For each piece of feedback, ask: *would knowing this up front have avoided the c
 7. Append a `## Review round <k>` section to the brief: the comments, what changed, and the lessons added.
 
 ## Report
-Tell the user: how many review items were fixed, answered, or left for discussion; which CI checks were fixed; the pushed commit; and the exact lessons added or updated, with file paths.
+Tell the user: how many review items were fixed, answered, or left for discussion; which CI checks were fixed; whether a merge conflict was resolved (and which files); the pushed commit; and the exact lessons added or updated, with file paths.

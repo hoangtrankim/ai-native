@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# new-job — run ai-native jobs in parallel, one git worktree per job.
+#
+#   new-job <name>              create ../<repo>-<name> from origin/<default> and start claude in it
+#   new-job --no-claude <name>  create the worktree only and print how to start it
+#   new-job --list              list job worktrees with their branch and PR state
+#   new-job --clean             remove job worktrees whose PR is merged or closed (and their local branches)
+#
+# Run it from anywhere inside the repo (main checkout or any worktree).
+# .env is copied into new worktrees when present, because it is gitignored and lessons need it to run.
+set -euo pipefail
+
+die() { printf 'new-job: %s\n' "$*" >&2; exit 1; }
+info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+
+git rev-parse --git-dir >/dev/null 2>&1 || die "run this inside a git repo"
+main_root="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
+repo="$(basename "$main_root")"
+parent="$(dirname "$main_root")"
+prefix="$parent/$repo-"
+
+default_branch() {
+  local d
+  d="$(git -C "$main_root" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" && { echo "${d#origin/}"; return; }
+  d="$(cd "$main_root" && gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null)" && [[ -n "$d" ]] && { echo "$d"; return; }
+  echo main
+}
+
+# Prints "<path>\t<branch or (detached)>" for every job worktree (siblings named <repo>-*).
+job_worktrees() {
+  git -C "$main_root" worktree list --porcelain | awk '
+    /^worktree /  { p = substr($0, 10) }
+    /^branch /    { b = substr($0, 8); sub(/^refs\/heads\//, "", b) }
+    /^detached/   { b = "(detached)" }
+    /^$/          { if (p != "") print p "\t" b; p = ""; b = "" }
+    END           { if (p != "") print p "\t" b }' |
+  while IFS=$'\t' read -r p b; do
+    [[ "$p" == "$prefix"* ]] && printf '%s\t%s\n' "$p" "$b"
+  done
+}
+
+pr_state() {  # prints "#N STATE" for the branch's newest PR, or nothing
+  [[ "$1" == "(detached)" ]] && return 0
+  (cd "$main_root" && gh pr list --head "$1" --state all --limit 1 --json number,state \
+    -q '.[0] | select(.) | "#\(.number) \(.state)"' 2>/dev/null) || true
+}
+
+cmd_list() {
+  local found=0 p b
+  while IFS=$'\t' read -r p b; do
+    found=1
+    printf '%-45s %-40s %s\n' "${p#"$parent"/}" "$b" "$(pr_state "$b")"
+  done < <(job_worktrees)
+  [[ $found -eq 1 ]] || echo "No job worktrees. Create one with: new-job <name>"
+}
+
+cmd_clean() {
+  local p b state removed=0
+  git -C "$main_root" fetch -q --prune origin || true
+  while IFS=$'\t' read -r p b; do
+    state="$(pr_state "$b")"
+    case "$state" in
+      *MERGED|*CLOSED) ;;
+      *) continue ;;
+    esac
+    # The .env we copied in doesn't count as work; anything else uncommitted does.
+    if [[ -n "$(git -C "$p" status --porcelain | grep -vx '?? .env' || true)" ]]; then
+      printf 'skip %s: PR %s but the folder has uncommitted changes\n' "${p#"$parent"/}" "$state"
+      continue
+    fi
+    rm -f "$p/.env"
+    git -C "$main_root" worktree remove "$p"
+    git -C "$main_root" branch -D "$b" >/dev/null 2>&1 || true
+    info "Removed ${p#"$parent"/} ($b, PR $state)"
+    removed=$((removed + 1))
+  done < <(job_worktrees)
+  git -C "$main_root" worktree prune
+  [[ $removed -gt 0 ]] || echo "Nothing to clean."
+}
+
+cmd_create() {
+  local name="$1" start_claude="$2" dir default
+  [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || die "job name may only contain letters, digits, . _ -"
+  dir="$prefix$name"
+  [[ ! -e "$dir" ]] || die "$dir already exists"
+  default="$(default_branch)"
+  git -C "$main_root" fetch -q --prune origin
+  git -C "$main_root" worktree add -q --detach "$dir" "origin/$default"
+  [[ -f "$main_root/.env" ]] && cp "$main_root/.env" "$dir/.env"
+  info "Created $dir from origin/$default"
+  if [[ "$start_claude" -eq 1 ]]; then
+    command -v claude >/dev/null 2>&1 || die "'claude' not found; start it yourself: cd $dir && claude"
+    cd "$dir" && exec claude
+  fi
+  echo "Start it with:  cd $dir && claude"
+}
+
+case "${1:-}" in
+  ""|-h|--help) sed -n '2,10p' "$0" ;;
+  --list)       cmd_list ;;
+  --clean)      cmd_clean ;;
+  --no-claude)  [[ -n "${2:-}" ]] || die "usage: new-job --no-claude <name>"; cmd_create "$2" 0 ;;
+  -*)           die "unknown option $1" ;;
+  *)            cmd_create "$1" 1 ;;
+esac

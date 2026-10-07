@@ -8,7 +8,7 @@ An AI-native development workflow for [Claude Code](https://claude.com/claude-co
   AGENTS  creates a branch → the ai-native-coder subagent implements and tests
   REVIEW  the ai-native-reviewer subagent checks the diff against the brief and lessons → fixes → opens a GitHub PR
 /pr-fix 42
-  FIX     reads review comments + failing CI → coder fixes → pushes → replies on the PR
+  FIX     reads review comments + failing CI + merge conflicts → coder fixes → pushes → replies on the PR
   MEMORY  turns each comment into a reusable lesson → the next /task starts smarter
 HOOKS     lint every edit · block commit/push/PR until all checks pass · CI runs the same checks
 ```
@@ -52,7 +52,7 @@ curl -fsSL https://raw.githubusercontent.com/hoangtrankim/ai-native/main/install
 curl -fsSL https://raw.githubusercontent.com/hoangtrankim/ai-native/main/install.sh | bash -s -- --project-setup
 ```
 
-Commit `.claude/` (skills, agents, `hooks/ai-native-check.sh`, `settings.json`) together with `.ai-native.json` through a PR. The hooks find their script through `$CLAUDE_PROJECT_DIR`, so the repo doesn't depend on anything in `~/.claude`. Anyone who clones the repo gets `/task`, `/pr-fix`, and the hooks. Memory and briefs still live in `~/.claude/ai-native/` on each machine.
+Commit `.claude/` (skills, agents, `hooks/ai-native-check.sh`, `bin/new-job`, `settings.json`) together with `.ai-native.json` through a PR. The hooks find their script through `$CLAUDE_PROJECT_DIR`, so the repo doesn't depend on anything in `~/.claude`. Anyone who clones the repo gets `/task`, `/pr-fix`, the hooks, and `new-job`. Memory and briefs still live in `~/.claude/ai-native/` on each machine.
 
 To update, re-run the `--project` command and commit the changes. To remove it, run with `--project --uninstall`. A global `--uninstall` never touches project installs.
 
@@ -79,6 +79,7 @@ Use Claude Code's built-in `/loop` command to have Claude check the PR on a time
 Every 10 minutes Claude runs `/pr-fix 42`:
 - **New comments:** fixes the code, runs the tests, pushes to the PR branch, replies to each comment, and saves lessons.
 - **Failing CI:** reads the failed job log, reproduces the failure locally, fixes it, and pushes. If CI fails for the same reason twice, it stops and asks you.
+- **Merge conflict with `main`:** merges `main` into the PR branch, keeps both sides' changes, runs the checks, and pushes. It never rebases or force-pushes.
 - **CI still running:** waits for the next check.
 - **Nothing new:** reports that nothing is left and waits for the next check.
 - **PR merged or closed:** says so; press `Esc` to stop the loop.
@@ -98,6 +99,32 @@ Tips:
 - To fix only some comments, end your review with a summary comment that says which ones to fix. Claude reads the whole review before it starts.
 - A check pauses and asks you in the terminal when the working tree has uncommitted changes, or when Claude disagrees with a comment. Answer there and the loop continues.
 - Run the loop in its own terminal or worktree. It checks out the PR branch, so it can conflict with other work in the same folder.
+
+## Parallel jobs
+
+Each job needs its own folder, because `/task` and `/pr-fix` check out branches. `new-job` gives every job its own **git worktree**: a sibling folder that shares the repo but has its own branch, `.venv`, and Claude session.
+
+```bash
+# one terminal tab per job
+.claude/bin/new-job l3        # creates ../<repo>-l3 from origin/main, copies .env, starts claude there
+/task "Lesson 3: …"           # then: /loop 10m /pr-fix <PR>
+
+.claude/bin/new-job l4        # second tab, second job
+/task "Lesson 4: …"
+
+.claude/bin/new-job --list    # job folders, branches, PR state
+.claude/bin/new-job --clean   # remove folders whose PR is merged or closed (uncommitted work is never removed)
+```
+
+With a global install the helper is at `~/.claude/ai-native/bin/new-job`. Add it to your `PATH` or create an alias.
+
+How the workflow handles parallel jobs:
+- **Starting point:** `/task` branches from `origin/main` without checking out `main`, so it works in any worktree. It never deletes a branch that another worktree has checked out.
+- **Conflicts:** when parallel PRs edit the same lines (for example a shared README table), whichever merges second gets a conflict, and `/pr-fix` resolves it automatically.
+- **Running `/pr-fix`:** run it in the job's own folder. If the PR branch is checked out elsewhere, it tells you where.
+- **Shared resources:** hooks remember passing checks per worktree, and lessons are shared, so what one job learns, the next `/task` uses.
+
+Tips: run 2–3 jobs at a time, since your review time and API cost are the real limits. Run only independent tasks in parallel. For dependent ones, use `/task`'s "stack on #N" option.
 
 ## Hooks and CI
 
@@ -154,6 +181,7 @@ claude/
 ├── agents/ai-native-coder.md     # implementation subagent (never commits)
 ├── agents/ai-native-reviewer.md  # read-only reviewer subagent (opus)
 ├── hooks/check.sh                # edit + ship hooks, driven by .ai-native.json
+├── bin/new-job                   # parallel jobs: one git worktree + Claude session per job
 └── memory/global.md              # starter template
 templates/<python-uv|node|generic>/
 ├── ai-native.json                # becomes <repo>/.ai-native.json

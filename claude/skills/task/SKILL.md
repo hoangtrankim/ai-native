@@ -35,15 +35,16 @@ Work through the phases in order. Stop and tell the user if any step fails; neve
 2. `git status --porcelain` must be empty. If it is not, ask the user whether to stop or continue on top of the existing changes.
 3. `gh auth status` must succeed. If it fails, tell the user to run `! gh auth login` and stop.
 4. Find the default branch: `gh repo view --json defaultBranchRef -q .defaultBranchRef.name`.
-5. **Start from the latest default branch.** The brief must describe the code as it is now, so do this before Phase 1:
-   `git fetch --prune origin && git switch <default> && git pull --ff-only`. If the pull fails (for example, local `<default>` has diverged), stop and show the user the error.
-6. **Clean up merged branches.** For each local branch other than `<default>`, run `gh pr list --state merged --head <branch> --json number -q length`. If the result is greater than 0, delete the branch with `git branch -D <branch>`. List the deleted branches in one line.
+5. **Start from the latest default branch.** The brief must describe the code as it is now, so do this before Phase 1. This folder may be one of several git worktrees running jobs in parallel, and git refuses to check out a branch that another worktree already has. So never run `git switch <default>`. Work from the remote ref instead:
+   `git fetch --prune origin && git switch --detach origin/<default>`
+   If `<default>` is not checked out in any worktree (`git worktree list`), also fast-forward the local copy with `git fetch origin <default>:<default>`. Ignore a failure there.
+6. **Clean up merged branches.** Collect the branches checked out in any worktree (`git worktree list --porcelain`, the `branch refs/heads/…` lines) and never touch those. For every other local branch except `<default>`, run `gh pr list --state merged --head <branch> --json number -q length`. If the result is greater than 0, delete the branch with `git branch -D <branch>`. List the deleted branches in one line. If a worktree's branch has a merged PR, mention that its folder can be removed with `new-job --clean` (at `.claude/bin/new-job` for a project install, or `~/.claude/ai-native/bin/new-job` for a global install).
 7. **Check open PRs.** Run `gh pr list --author @me --state open --json number,title,headRefName`. If any are open, show them and ask with AskUserQuestion whether this task depends on one of them. Options:
-   - **Independent:** continue from `<default>` (the usual case).
+   - **Independent:** continue from `origin/<default>` (the usual case, and the right choice for parallel jobs).
    - **Stop:** the user merges first, then re-runs `/task`.
-   - **Stack on #N:** `git switch <its headRefName> && git pull --ff-only`. That branch becomes `BASE` for the rest of this task.
+   - **Stack on #N:** `git switch --detach origin/<its headRefName>`. That branch becomes `BASE` for the rest of this task.
 
-   `BASE` = `<default>` unless the user chose to stack.
+   `BASE` = `<default>` unless the user chose to stack. You are now on a detached HEAD at the latest `origin/<BASE>`.
 8. Read `.ai-native.json` in the repo root if it exists. Its `check` list is this repo's official lint and test commands. The ai-native hooks run them automatically: the file you edit is formatted and linted on every edit, and every command in `check` must pass before `git commit`, `git push`, or `gh pr create` is allowed.
 
 ## Phase 1 — BRIEF
@@ -80,7 +81,7 @@ Work through the phases in order. Stop and tell the user if any step fails; neve
 5. **Get approval.** Show the brief and use AskUserQuestion with these options: Approve / Edit (user says what to change) / Cancel. Resolve every open question before you approve. Do not write code before approval. Set `Status: approved` in the file.
 
 ## Phase 2 — AGENTS
-1. You are already on an up-to-date `BASE` (Phase 0). Create the branch: `git switch -c feat/<ID>-<slug>` (slug: lowercase, hyphens, at most 40 characters).
+1. You are already on the latest `origin/<BASE>` (Phase 0). Create the branch from there: `git switch -c feat/<ID>-<slug>` (slug: lowercase, hyphens, at most 40 characters).
 2. Spawn the `ai-native-coder` subagent. Subagents start with no context, so paste the **full brief text** and the **full list of relevant lessons** into the prompt, along with the repo root and the test commands. Do not refer it to files it cannot see without saying where they are.
 3. Read its report: files changed, tests run, deviations, and open questions. If it raises a blocking question, ask the user and spawn the coder again with the answer.
 

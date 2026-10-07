@@ -54,9 +54,11 @@ if [[ $PROJECT -eq 1 ]]; then
   TARGET="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.claude"
   HOOK_FILE="$TARGET/hooks/ai-native-check.sh"
   HOOK_REF='"$CLAUDE_PROJECT_DIR"/.claude/hooks/ai-native-check.sh'
+  BIN_DIR="$TARGET/bin"
 else
   HOOK_FILE="$AI_HOME/hooks/check.sh"
   HOOK_REF='"$HOME/.claude/ai-native/hooks/check.sh"'
+  BIN_DIR="$AI_HOME/bin"
 fi
 HOOK_POST="$HOOK_REF post-edit"
 HOOK_PRE="$HOOK_REF pre-ship"
@@ -99,8 +101,8 @@ if [[ $UNINSTALL -eq 1 ]]; then
   if [[ -f "$TARGET/settings.json" ]]; then
     update_settings_hooks "$TARGET/settings.json" 0 && info "Removed ai-native hooks from $TARGET/settings.json"
   fi
-  rm -f "$HOOK_FILE"
-  [[ $PROJECT -eq 1 ]] || rm -rf "$AI_HOME/hooks"
+  rm -f "$HOOK_FILE" "$BIN_DIR/new-job"
+  [[ $PROJECT -eq 1 ]] || rm -rf "$AI_HOME/hooks" "$AI_HOME/bin"
   info "Kept memory and briefs in $AI_HOME (delete manually if unwanted)."
   exit 0
 fi
@@ -171,6 +173,12 @@ for a in "${AGENTS[@]}"; do
   info "Installed agent $a"
 done
 
+# --- Parallel-jobs helper ---
+mkdir -p "$BIN_DIR"
+cp "$SRC/bin/new-job" "$BIN_DIR/new-job"
+chmod +x "$BIN_DIR/new-job"
+info "Installed parallel-jobs helper -> $BIN_DIR/new-job"
+
 # --- Hooks: script lives in AI_HOME; entries are merged into settings.json ---
 if [[ $NO_HOOKS -eq 0 ]]; then
   mkdir -p "$(dirname "$HOOK_FILE")"
@@ -218,6 +226,7 @@ ai-native installed.
   2. Jira: run /mcp and sign in to "atlassian" once.
   3. In each repo, once:  curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | bash -s -- --project-setup
   4. Work:  /task PROJ-123   or   /task "describe the change"
-  5. Then:  /loop 10m /pr-fix <PR number>   (review comments + failing CI)
+  5. Then:  /loop 10m /pr-fix <PR number>   (review comments + failing CI + merge conflicts)
+  6. Parallel jobs:  $BIN_DIR/new-job <name>   (one git worktree + Claude session per job)
 Lessons live in $AI_HOME/memory — every /pr-fix makes the next /task smarter.
 EOF
